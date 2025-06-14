@@ -1,34 +1,42 @@
-import mysql.connector
-from getpass import getpass
+import os
+from flask import Flask, request, send_from_directory, jsonify
+from werkzeug.utils import secure_filename
 
-# Database connection configuration
-db_config = {
-    "host": "localhost",      # or your DB host
-    "user": "your_mysql_user",
-    "password": "your_mysql_password",
-    "database": "your_database"
-}
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
-try:
-    conn = mysql.connector.connect(**db_config)
-    cursor = conn.cursor()
-except mysql.connector.Error as err:
-    print(f"Error connecting to database: {err}")
-    exit(1)
+app = Flask(__name__)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# Prompt user for credentials
-username = input("Enter your username: ")
-password = getpass("Enter your password: ")
+# Create uploads directory if it doesn't exist
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Query to check credentials
-query = "SELECT * FROM users WHERE username = %s AND password = %s"
-cursor.execute(query, (username, password))
-result = cursor.fetchone()
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-if result:
-    print("Login successful!")
-else:
-    print("Login failed.")
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+    if file and allowed_file(file.filename):
+        filename = secure_filename(file.filename)
+        file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+        return jsonify({'message': 'File uploaded successfully', 'filename': filename}), 201
+    else:
+        return jsonify({'error': 'Invalid file type'}), 400
 
-cursor.close()
-conn.close()
+@app.route('/download/<filename>', methods=['GET'])
+def download_file(filename):
+    filename = secure_filename(filename)
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    if os.path.exists(file_path):
+        return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
+    else:
+        return jsonify({'error': 'File not found'}), 404
+
+if __name__ == '__main__':
+    app.run(debug=True)

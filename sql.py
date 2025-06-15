@@ -1,42 +1,75 @@
-import os
-from flask import Flask, request, send_from_directory, jsonify
-from werkzeug.utils import secure_filename
-
-UPLOAD_FOLDER = 'uploads'
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///orders.db"
+db = SQLAlchemy(app)
 
-# Create uploads directory if it doesn't exist
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+# Sample Model
+class Order(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    customer_name = db.Column(db.String(100), nullable=False)
+    product_name = db.Column(db.String(100), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
 
-def allowed_file(filename):
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+# Create tables
+with app.app_context():
+    db.create_all()
 
-@app.route('/upload', methods=['POST'])
-def upload_file():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part'}), 400
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-        return jsonify({'message': 'File uploaded successfully', 'filename': filename}), 201
-    else:
-        return jsonify({'error': 'Invalid file type'}), 400
+@app.route('/search', methods=['GET'])
+def search():
+    customer = request.args.get('customer_name')
+    product = request.args.get('product_name')
+    order_id = request.args.get('order_id')
+    query = Order.query
 
-@app.route('/download/<filename>', methods=['GET'])
-def download_file(filename):
-    filename = secure_filename(filename)
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    if os.path.exists(file_path):
-        return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
-    else:
-        return jsonify({'error': 'File not found'}), 404
+    if customer:
+        query = query.filter(Order.customer_name.ilike(f"%{customer}%"))
+    if product:
+        query = query.filter(Order.product_name.ilike(f"%{product}%"))
+    if order_id:
+        query = query.filter(Order.id == int(order_id))
+    
+    results = query.all()
+    return jsonify([
+        {
+            "order_id": order.id,
+            "customer_name": order.customer_name,
+            "product_name": order.product_name,
+            "quantity": order.quantity
+        }
+        for order in results
+    ])
+
+@app.route('/update/<int:order_id>', methods=['PUT'])
+def update(order_id):
+    data = request.json
+    order = Order.query.get(order_id)
+    if not order:
+        return jsonify({"error": "Order not found"}), 404
+
+    if "customer_name" in data:
+        order.customer_name = data["customer_name"]
+    if "product_name" in data:
+        order.product_name = data["product_name"]
+    if "quantity" in data:
+        order.quantity = data["quantity"]
+
+    db.session.commit()
+    return jsonify({"message": "Order updated successfully"})
+
+# (Optional) Add endpoint to create sample data
+@app.route('/add', methods=['POST'])
+def add_order():
+    data = request.json
+    order = Order(
+        customer_name=data["customer_name"],
+        product_name=data["product_name"],
+        quantity=data["quantity"]
+    )
+    db.session.add(order)
+    db.session.commit()
+    return jsonify({"order_id": order.id}), 201
 
 if __name__ == '__main__':
     app.run(debug=True)
